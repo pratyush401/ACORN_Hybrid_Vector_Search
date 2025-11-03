@@ -7,6 +7,7 @@ import json
 import numpy as np
 import hnswlib
 import torch
+import time
 from PIL import Image
 from torchvision import models, transforms
 
@@ -20,15 +21,15 @@ class ACORN1HybridSearch:
     Integrates metadata filtering directly into HNSW traversal.
     """
 
-    def __init__(self, dim, space='l2', ef_search_default=10):
+    def __init__(self, dim, metadata, space='l2', ef_search_default=10):
         self.dim = dim
         self.space = space
         self.index = hnswlib.Index(space=space, dim=dim)
-        self.metadata = {}  # node_id -> dict of metadata
+        self.metadata = metadata  # node_id -> dict of metadata
         self.ef_search_default = ef_search_default
         self.initialized = False
 
-    def init_index(self, max_elements, M=16, ef_construction=200, random_seed=42):
+    def init_index(self, max_elements, M=64, ef_construction=200, random_seed=42):
         """Initialize HNSW index."""
         self.index.init_index(max_elements=max_elements, ef_construction=ef_construction, M=M, random_seed=random_seed)
         self.initialized = True
@@ -46,118 +47,71 @@ class ACORN1HybridSearch:
         # for i, mid in enumerate(ids):
         #     self.metadata[mid] = metadata_list[i]
 
-    def _passes_metadata_filter(self, node_meta, query_meta):
-        """
-        Check whether a node's metadata passes query conditions.
-        Supports categorical equality and numeric range filters.
-        """
-        for key, value in query_meta.items():
-            if key not in node_meta:
-                return False
-            node_value = node_meta[key]
-
-            # If query specifies a tuple => range
-            if isinstance(value, tuple) and len(value) == 2:
-                low, high = value
-                if not (low <= node_value <= high):
-                    return False
-            else:
-                # categorical match
-                if node_value != value:
-                    return False
-        return True
-
-    def acorn_search(self, query_vector, query_metadata, k=10, meta_search=50):
+    def acorn_search(self, query_vector, query_metadata, filenames, k, meta_search):
         """
         ACORN-1 hybrid search:
         - progressively increases ef_search
         - filters nodes dynamically by metadata
         """
-        ef_search = 1
+        ef_search = 300
+        self.index.set_ef(ef_search)
         final_results = []
+        visits = 2
+        large_k = 200
 
-        while ef_search <= meta_search:
+        while visits <= meta_search:
             # Perform HNSW ANN search
-            labels, distances = self.index.knn_query(query_vector, k)
-            filtered_results = []
+            # for _ in range(6):
+                labels, _ = self.index.knn_query(query_vector, max_visits=visits, k=large_k)
+                filtered_results = []
+                updated_labels = []
+                print(labels.shape)
 
-            for label, dist in zip(labels[0], distances[0]):
-                node_meta = self.metadata.get(label, {})
-                if self._passes_metadata_filter(node_meta, query_metadata):
-                    filtered_results.append((label, dist))
+                for label in labels[0]:
+                    node_meta = self.metadata.get(filenames[label], {})
+                    if (query_metadata.keys() == {}):
+                        continue
+                    for query_key in query_metadata.keys():
+                        if query_key in node_meta.keys():
+                            query_value = query_metadata[query_key]
+                            # print(node_meta[query_key][0]["value"])
+                            # print(query_value[1])]
+                            if (query_value[0] == "exact"):
+                                if (query_key == "item_weight" and node_meta[query_key][0]["value"] != query_value[1]):
+                                    filtered_results.append(label)
+                                elif (query_key == "model_year" and node_meta[query_key][0]["value"] != query_value[1]):
+                                    filtered_results.append(label)
+                                elif (query_key == "color" and node_meta[query_key][0]["value"] != query_value[1]):
+                                    filtered_results.append(label)
+                                elif (query_key == "country" and node_meta[query_key] != query_value[1]):
+                                    filtered_results.append(label)
+                                elif (query_key == "brand" and node_meta[query_key][0]["value"] != query_value[1]):
+                                    filtered_results.append(label)
+                            elif (query_value[0] == "leq"):
+                                if (query_key == "item_weight" and node_meta[query_key][0]["value"] > query_value[1]):
+                                    filtered_results.append(label)
+                                elif (query_key == "model_year" and node_meta[query_key][0]["value"] > query_value[1]):
+                                    filtered_results.append(label)
+                            elif (query_value[0] == "geq"):
+                                if (query_key == "item_weight" and node_meta[query_key][0]["value"] < query_value[1]):
+                                    filtered_results.append(label)
+                                elif (query_key == "model_year" and node_meta[query_key][0]["value"] < query_value[1]):
+                                    filtered_results.append(label)
+                            # print("----")
 
-            if len(filtered_results) >= k:
-                # Enough valid results found
-                filtered_results.sort(key=lambda x: x[1])
-                final_results = filtered_results[:k]
-                break
-            else:
-                # Expand search frontier
-                ef_search += 5
-                self.index.set_ef(ef_search)
+                # print(f"Labels from HNSW: {labels[0]}")
+                print(f"Filtered results: {filtered_results}")
+                updated_labels = list(labels[0])
+                for i in set(filtered_results):
+                    self.index.mark_deleted(i)
+                    updated_labels.remove(i)
+                # print(f"Updated labels after filtering: {updated_labels}")
+                
+                visits = visits + 1
+                final_results = updated_labels[:k]
 
         return final_results
 
-
-# # ============================================================
-# # ABO Dataset Embedding and Index Building
-# # ============================================================
-
-# def build_embeddings_from_abo(image_dir, metadata_path, limit=10000):
-#     """
-#     Load images + metadata from ABO dataset and generate embeddings.
-#     :param image_dir: path to image folder
-#     :param metadata_path: path to metadata JSON/CSV file
-#     :param limit: number of samples to process
-#     :return: (vectors, ids, meta_list)
-#     """
-#     # 1. Load metadata
-#     with open(metadata_path, "r") as f:
-#         metadata = json.load(f)
-
-#     # 2. Setup ResNet-50 encoder
-#     resnet = models.resnet50(pretrained=True)
-#     resnet.fc = torch.nn.Identity()  # remove classification head
-#     resnet.eval()
-
-#     transform = transforms.Compose([
-#         transforms.Resize(256),
-#         transforms.CenterCrop(224),
-#         transforms.ToTensor(),
-#         transforms.Normalize(mean=[0.485, 0.456, 0.406],
-#                              std=[0.229, 0.224, 0.225])
-#     ])
-
-#     def embed_image(img_path):
-#         img = Image.open(img_path).convert("RGB")
-#         x = transform(img).unsqueeze(0)
-#         with torch.no_grad():
-#             vec = resnet(x).numpy().flatten().astype(np.float32)
-#         return vec
-
-#     # 3. Build arrays
-#     ids, vectors, meta_list = [], [], []
-#     for i, (pid, meta) in enumerate(metadata.items()):
-#         img_path = os.path.join(image_dir, f"{pid}.jpg")
-#         if not os.path.exists(img_path):
-#             continue
-#         try:
-#             vec = embed_image(img_path)
-#         except Exception:
-#             continue
-#         ids.append(i)
-#         vectors.append(vec)
-#         meta_list.append(meta)
-#         if len(ids) >= limit:
-#             break
-
-#     vectors = np.stack(vectors).astype(np.float32)
-#     return vectors, ids, meta_list
-
-
-# ============================================================
-# Example Usage
-# ============================================================
 
 if __name__ == "__main__":
     # --------------------------
@@ -168,7 +122,7 @@ if __name__ == "__main__":
         with open(f"map0{i}.csv", "r") as f:
             for line in f:
                 parts = line.strip().split(",")
-                path_to_ids[parts[0]] = parts[3]
+                path_to_ids[parts[0]] = parts[3][3:]
     print(f"Loaded {len(path_to_ids)} image ID mappings.")
 
     path_to_meta = {}
@@ -184,36 +138,38 @@ if __name__ == "__main__":
     image_dir = "./0*"              # Path to ABO images
     limit = 5000                       # limit images for faster demo
 
-    # # # --------------------------
-    # # # 2. Build embeddings
-    # # # --------------------------
-    # # print("Building embeddings from ABO dataset...")
-    # # vectors, ids, meta_list = build_embeddings_from_abo(image_dir, metadata_path, limit)
-    # # dim = vectors.shape[1]
-    # # print(f"Loaded {len(ids)} items with {dim}-dimensional embeddings")
-
     embeddings_data = np.load("embeddings.npy")
     filename_data = np.load("filenames.npy")
+    query_embeddings_data = np.load("embeddings_query.npy")
+    query_filename_data = np.load("filenames_query.npy")
     ids = np.arange(len(embeddings_data))
     print(len(ids))
+    # print(query_embeddings_data.shape)
+    # print(filename_data)
+    # print(np.where(filename_data == "02a0de12.jpg")[0])
+    # print(path_to_meta["0974ad06.jpg"])
+
 
     # # # --------------------------
     # # # 3. Build ACORN-1 index
     # # # --------------------------
-    acorn = ACORN1HybridSearch(dim=2048)
+    acorn = ACORN1HybridSearch(dim=2048, metadata=path_to_meta)
     acorn.init_index(max_elements=len(ids))
     acorn.add_items(embeddings_data, ids)
     print("HNSW index built successfully!")
 
-    # # --------------------------
-    # # 4. Example query
-    # # --------------------------
-    # # Example: "Find black items made after 2015"
-    # query_img_path = os.path.join(image_dir, f"{ids[0]}.jpg")
-    # query_vector = vectors[0].reshape(1, -1)  # using first image as query
-    # query_metadata = {"color": "black", "model_year": (2015, 2022)}
+    query_vector = query_embeddings_data[1].reshape(1, -1)
+    print(query_filename_data[1])
+    query_metadata = {"country": ["exact", "US"], "item_weight": ["exact", 1.25], "brand": ["exact", "365 Everyday Value"]}
 
-    # results = acorn.acorn_search(query_vector, query_metadata, k=5)
-    # print("\n=== Search Results ===")
-    # for rid, dist in results:
-    #     print(f"ID={rid}, dist={dist:.3f}, metadata={acorn.metadata[rid]}")
+    time_start = time.time()
+    results = acorn.acorn_search(query_vector, query_metadata, filename_data, k=3, meta_search=6)
+    time_end = time.time()
+    print(f"Search completed in {time_end - time_start:.7f} seconds.")
+    if len(results) == 0:
+        print("No results found.")
+    for r in results:
+        print(r)
+        print(filename_data[r])
+        print(path_to_meta[filename_data[r]])
+
