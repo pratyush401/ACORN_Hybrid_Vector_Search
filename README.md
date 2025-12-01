@@ -10,6 +10,7 @@ This project implements the ACORN‑1 method:
 - Full hybrid orchestration with real query examples  
 
 It includes scripts for embedding generation, metadata parsing, hybrid search, performance evaluation, and sample test images.
+Additionally, it compares pre-filtering and post-filtering which has been implemented as well.
 
 ---
 
@@ -115,9 +116,9 @@ Defined in `acorn.py` as:
 
 ```
 ACORN Search
- ├── Pre-filter (optional)
+ ├── Pre-filter 
  ├── Vector search via HNSWlib
- └── Post-filter (optional)
+ └── Post-filter 
 ```
 
 Example filters from the code:
@@ -182,16 +183,16 @@ unzip mappings.zip    -d mappings/
 
 ## **Extending the System**
 
-### 🔧 Improve Embedding Quality
+### Improve Embedding Quality
 - Replace ResNet‑50 with **ViT**, **CLIP**, **EfficientNet**, or a fine‑tuned model.
 
-### ⚡ Faster / Larger Vector Index
+### Faster / Larger Vector Index
 - Replace HNSWlib with **FAISS**, **Milvus**, **Qdrant**, or **Weaviate**.
 
-### 🌐 Deploy as an API
+### Deploy as an API
 - Wrap into **FastAPI** or **Flask** service.
 
-### 🎯 Learned Re-ranking
+### Learned Re-ranking
 - ML model combining vector & metadata scores.
 
 ---
@@ -225,19 +226,8 @@ unzip mappings.zip    -d mappings/
        └─────────────────┘
 ```
 
----
-
-## **License**
-Specify your license of choice (MIT recommended).
-
----
-
 ## **Acknowledgements**
 - **ABO Dataset**  
 - **HNSWlib** (Yury Malkov)  
 - **PyTorch / TorchVision**  
-
----
-
-If you want **badges**, **GIF demos**, or a **visual architecture PNG**, I can generate those too.
 
