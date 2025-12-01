@@ -9,13 +9,14 @@ import hnswlib
 import torch
 import time
 from PIL import Image
+import psutil
 from torchvision import models, transforms
 
 # ============================================================
 # ACORN-1 Hybrid Class Definition
 # ============================================================
 
-class ACORN1HybridSearch:
+class HNSWSearch:
     """
     Lightweight ACORN-1 hybrid search implementation.
     Integrates metadata filtering directly into HNSW traversal.
@@ -44,104 +45,189 @@ class ACORN1HybridSearch:
         if not self.initialized:
             raise RuntimeError("Call init_index() before adding items.")
         self.index.add_items(vectors, ids)
-        # for i, mid in enumerate(ids):
-        #     self.metadata[mid] = metadata_list[i]
+
+    def post_filter_search(self, query_vector, query_metadata, filenames, k):
+        ef_search = 50
+        self.index.set_ef(ef_search)
+        large_k = 50
+
+        labels, _ = self.index.knn_query(query_vector, max_visits=100000, blocked=set(), k=large_k)
+        filtered_results = []
+        updated_labels = []
+        for label in labels[0]:
+            node_meta = self.metadata.get(filenames[label], {})
+            if (query_metadata.keys() == {}):
+                continue
+            for query_key in query_metadata.keys():
+                if query_key in node_meta.keys():
+                    query_value = query_metadata[query_key]
+                    if (query_value[0] == "exact"):
+                        if (query_key == "item_weight" and node_meta[query_key][0]["value"] != query_value[1]):
+                            filtered_results.append(label)
+                        elif (query_key == "model_year" and node_meta[query_key][0]["value"] != query_value[1]):
+                            filtered_results.append(label)
+                        elif (query_key == "color" and node_meta[query_key][0]["value"] != query_value[1]):
+                            filtered_results.append(label)
+                        elif (query_key == "country" and node_meta[query_key] != query_value[1]):
+                            filtered_results.append(label)
+                        elif (query_key == "brand" and node_meta[query_key][0]["value"] != query_value[1]):
+                            filtered_results.append(label)
+                    elif (query_value[0] == "leq"):
+                            if (query_key == "item_weight" and node_meta[query_key][0]["value"] > query_value[1]):
+                                filtered_results.append(label)
+                            elif (query_key == "model_year" and node_meta[query_key][0]["value"] > query_value[1]):
+                                filtered_results.append(label)
+                    elif (query_value[0] == "geq"):
+                            if (query_key == "item_weight" and node_meta[query_key][0]["value"] < query_value[1]):
+                                filtered_results.append(label)
+                            elif (query_key == "model_year" and node_meta[query_key][0]["value"] < query_value[1]):
+                                filtered_results.append(label)
+                    elif (query_value[0] == "<"):
+                            if (query_key == "item_weight" and node_meta[query_key][0]["value"] >= query_value[1]):
+                                filtered_results.append(label)
+                            elif (query_key == "model_year" and node_meta[query_key][0]["value"] >= query_value[1]):
+                                filtered_results.append(label)
+                    elif (query_value[0] == ">"):
+                            if (query_key == "item_weight" and node_meta[query_key][0]["value"] <= query_value[1]):
+                                filtered_results.append(label)
+                            elif (query_key == "model_year" and node_meta[query_key][0]["value"] <= query_value[1]):
+                                filtered_results.append(label)
+                    elif (query_value[0] == "substring"):
+                            if (query_key == "color" and query_value[1] not in node_meta[query_key][0]["value"]):
+                                filtered_results.append(label)
+                            elif (query_key == "country" and query_value[1] not in node_meta[query_key][0]["value"]):
+                                filtered_results.append(label)
+                            elif (query_key == "brand" and query_value[1] not in node_meta[query_key][0]["value"]):
+                                filtered_results.append(label)
+                            # print("----")
+                else:
+                    filtered_results.append(label)
+
+            # print(f"Labels from HNSW: {labels[0]}")
+        # print(f"Filtered results: {filtered_results}")
+        updated_labels = list(labels[0])
+        for i in set(filtered_results):
+            updated_labels.remove(i)
+        # print(f"Updated labels after filtering: {updated_labels}")
+
+        return updated_labels[:k]
+        
+
+
 
     def acorn_search(self, query_vector, query_metadata, filenames, k, meta_search):
-        """
-        ACORN-1 hybrid search:
-        - progressively increases ef_search
-        - filters nodes dynamically by metadata
-        """
-        ef_search = 300
+        ef_search = 200
         self.index.set_ef(ef_search)
         final_results = []
+        filtered_set = set()
+        unfiltered_set = set()
         visits = 2
         large_k = 200
 
         while visits <= meta_search:
-            # Perform HNSW ANN search
-            # for _ in range(6):
-                labels, _ = self.index.knn_query(query_vector, max_visits=visits, k=large_k)
+                labels, dist = self.index.knn_query(query_vector, max_visits=visits, blocked=filtered_set, k=large_k)
                 filtered_results = []
                 updated_labels = []
-                print(labels.shape)
 
-                for label in labels[0]:
+                for label, d in zip(labels[0], dist[0]):
                     node_meta = self.metadata.get(filenames[label], {})
                     if (query_metadata.keys() == {}):
                         continue
                     for query_key in query_metadata.keys():
                         if query_key in node_meta.keys():
                             query_value = query_metadata[query_key]
-                            # print(node_meta[query_key][0]["value"])
-                            # print(query_value[1])]
                             if (query_value[0] == "exact"):
-                                if (query_key == "item_weight" and node_meta[query_key][0]["value"] != query_value[1]):
-                                    filtered_results.append(label)
+                                if (query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] != query_value[1]):
+                                    filtered_results.append((label, d))
                                 elif (query_key == "model_year" and node_meta[query_key][0]["value"] != query_value[1]):
-                                    filtered_results.append(label)
+                                    filtered_results.append((label, d))
                                 elif (query_key == "color" and node_meta[query_key][0]["value"] != query_value[1]):
-                                    filtered_results.append(label)
+                                    filtered_results.append((label, d))
                                 elif (query_key == "country" and node_meta[query_key] != query_value[1]):
-                                    filtered_results.append(label)
+                                    filtered_results.append((label, d))
                                 elif (query_key == "brand" and node_meta[query_key][0]["value"] != query_value[1]):
-                                    filtered_results.append(label)
+                                    filtered_results.append((label, d))
                             elif (query_value[0] == "leq"):
-                                if (query_key == "item_weight" and node_meta[query_key][0]["value"] > query_value[1]):
-                                    filtered_results.append(label)
+                                if (query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] > query_value[1]):
+                                    filtered_results.append((label, d))
                                 elif (query_key == "model_year" and node_meta[query_key][0]["value"] > query_value[1]):
-                                    filtered_results.append(label)
+                                    filtered_results.append((label, d))
                             elif (query_value[0] == "geq"):
-                                if (query_key == "item_weight" and node_meta[query_key][0]["value"] < query_value[1]):
-                                    filtered_results.append(label)
+                                if (query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] < query_value[1]):
+                                    filtered_results.append((label, d))
                                 elif (query_key == "model_year" and node_meta[query_key][0]["value"] < query_value[1]):
-                                    filtered_results.append(label)
+                                    filtered_results.append((label, d))
+                            elif (query_value[0] == "<"):
+                                if (query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] >= query_value[1]):
+                                    filtered_results.append((label, d))
+                                elif (query_key == "model_year" and node_meta[query_key][0]["value"] >= query_value[1]):
+                                    filtered_results.append((label, d))
+                            elif (query_value[0] == ">"):
+                                if (query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] <= query_value[1]):
+                                    filtered_results.append((label, d))
+                                elif (query_key == "model_year" and node_meta[query_key][0]["value"] <= query_value[1]):
+                                    filtered_results.append((label, d))
+                            elif (query_value[0] == "substring"):
+                                if (query_key == "color" and query_value[1] not in node_meta[query_key][0]["value"]):
+                                    filtered_results.append((label, d))
+                                elif (query_key == "country" and query_value[1] not in node_meta[query_key][0]["value"]):
+                                    filtered_results.append((label, d))
+                                elif (query_key == "brand" and query_value[1] not in node_meta[query_key][0]["value"]):
+                                    filtered_results.append((label, d))
                             # print("----")
+                        else:
+                            filtered_results.append((label, d))
 
-                # print(f"Labels from HNSW: {labels[0]}")
-                print(f"Filtered results: {filtered_results}")
-                updated_labels = list(labels[0])
-                for i in set(filtered_results):
-                    self.index.mark_deleted(i)
-                    updated_labels.remove(i)
-                # print(f"Updated labels after filtering: {updated_labels}")
-                
+                # print(f"Labels from HNSW: {len(labels[0])}")
+                # print(f"Filtered results: {len(set(filtered_results))}")
+                updated_labels = list(zip(labels[0], dist[0]))
+                # print(f"Updated Labels: {len(updated_labels)}")
+                if len(labels[0]) != len(set(filtered_results)):
+                    for i,d in set(filtered_results):
+                        if i not in unfiltered_set:
+                            filtered_set.add(i)
+                        updated_labels.remove((i,d))
+                else:
+                    for i,d in set(filtered_results):
+                        unfiltered_set.add(i)
+                        updated_labels.remove((i,d))
+                    # print(f"{visits} Not blocking")
+                # print(f"Updated labels after filtering from visit {visits}: {updated_labels}")
+        
                 visits = visits + 1
-                final_results = updated_labels[:k]
-
-        return final_results
+                final_results.extend(updated_labels)
+        
+        final_results = list(set(final_results))
+        final_results.sort(key=lambda x: x[1])
+        return final_results[:k]
 
 
 if __name__ == "__main__":
-    # --------------------------
-    # 1. Paths (edit these)
-    # --------------------------
     path_to_ids = {}
-    for i in [0,1,2,3,4,5,6,7,8,9,'a','b','c','d','e']:
-        with open(f"map0{i}.csv", "r") as f:
-            for line in f:
-                parts = line.strip().split(",")
-                path_to_ids[parts[0]] = parts[3][3:]
+    for k in [0,1,2,3,4]:
+        for i in [0,1,2,3,4,5,6,7,8,9,'a','b','c','d','e','f']:
+            if k == 0 and i == 'f':
+                continue
+            with open(f"map{k}{i}.csv", "r") as f:
+                for line in f:
+                    parts = line.strip().split(",")
+                    path_to_ids[parts[0]] = parts[3][3:]
+
     print(f"Loaded {len(path_to_ids)} image ID mappings.")
 
     path_to_meta = {}
-    with open("metadata0.py", "r") as f:
+    with open("metadata-small.py", "r") as f:
         for line in f:
             curr_line = line[1:-1]
             curr_line = curr_line.strip().split(",")
             image_id = curr_line[0]
             metadata = ",".join(curr_line[1:])[:-1]
-            # id_to_meta[image_id] = metadata
             path_to_meta[path_to_ids[image_id]] = json.loads(metadata)
 
-    image_dir = "./0*"              # Path to ABO images
-    limit = 5000                       # limit images for faster demo
-
-    embeddings_data = np.load("embeddings.npy")
-    filename_data = np.load("filenames.npy")
-    query_embeddings_data = np.load("embeddings_query.npy")
-    query_filename_data = np.load("filenames_query.npy")
+    embeddings_data = np.load("embeddings_query_full.npy")
+    filename_data = np.load("filenames_query_full.npy")
+    query_embeddings_data = np.load("embeddings_query_full_query.npy")
+    query_filename_data = np.load("filenames_query_full_query.npy")
     ids = np.arange(len(embeddings_data))
     print(len(ids))
     # print(query_embeddings_data.shape)
@@ -150,26 +236,35 @@ if __name__ == "__main__":
     # print(path_to_meta["0974ad06.jpg"])
 
 
-    # # # --------------------------
-    # # # 3. Build ACORN-1 index
-    # # # --------------------------
-    acorn = ACORN1HybridSearch(dim=2048, metadata=path_to_meta)
-    acorn.init_index(max_elements=len(ids))
-    acorn.add_items(embeddings_data, ids)
+    # # # # --------------------------
+    # # # # 3. Build ACORN-1 index
+    # # # # --------------------------
+    time_start = time.time()
+    hnsw = HNSWSearch(dim=2048, metadata=path_to_meta)
+    hnsw.init_index(max_elements=len(ids))
+    hnsw.add_items(embeddings_data, ids)
     print("HNSW index built successfully!")
+    time_end = time.time()
+    print(f"Indexing completed in {time_end - time_start:.7f} seconds.")
 
-    query_vector = query_embeddings_data[1].reshape(1, -1)
-    print(query_filename_data[1])
-    query_metadata = {"country": ["exact", "US"], "item_weight": ["exact", 1.25], "brand": ["exact", "365 Everyday Value"]}
+    # # process = psutil.Process(os.getpid())
+    # # memory_info = process.memory_info()
+
+    # # print(f"Resident Set Size (RSS): {memory_info.rss / (1024 * 1024):.2f} MB")
+
+    query_vector = query_embeddings_data[4].reshape(1, -1)
+    print(query_filename_data[4])
+    query_metadata_class_2_2 = {"item_weight": ["<", 2], "brand": ["substring", "Amazon"]}
+    query_metadata_class_2_1 = {"country": ["exact", "IN"], "brand": ["substring", "Amazon"]}
+    query_metadata_class_3 = {"country": ["exact", "US"]}
 
     time_start = time.time()
-    results = acorn.acorn_search(query_vector, query_metadata, filename_data, k=3, meta_search=6)
+    results = hnsw.acorn_search(query_vector, query_metadata_class_2_2, filename_data, k=3, meta_search=10)
     time_end = time.time()
     print(f"Search completed in {time_end - time_start:.7f} seconds.")
     if len(results) == 0:
         print("No results found.")
     for r in results:
         print(r)
-        print(filename_data[r])
-        print(path_to_meta[filename_data[r]])
-
+        print(filename_data[r[0]])
+        # print(path_to_meta[filename_data[r]])

@@ -1,5 +1,6 @@
 import os
 import sys
+import psutil
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -9,22 +10,26 @@ import torch
 from torchvision import models, transforms
 import json
 
-embeddings = np.load('embeddings.npy')   # shape: (N, D)
+embeddings = np.load('embeddings_query_full.npy')   # shape: (N, D)
 assert embeddings.ndim == 2
 N, D = embeddings.shape
 
-filenames = np.load('filenames.npy')
+filenames = np.load('filenames_query_full.npy')
 
 path_to_ids = {}
-for i in [0,1,2,3,4,5,6,7,8,9,'a','b','c','d','e']:
-    with open(f"map0{i}.csv", "r") as f:
-        for line in f:
-            parts = line.strip().split(",")
-            path_to_ids[parts[0]] = parts[3][3:]
+for k in [0,1,2,3,4]:
+    for i in [0,1,2,3,4,5,6,7,8,9,'a','b','c','d','e','f']:
+        if k == 0 and i == 'f':
+            continue
+        with open(f"map{k}{i}.csv", "r") as f:
+            for line in f:
+                parts = line.strip().split(",")
+                path_to_ids[parts[0]] = parts[3][3:]
+
 print(f"Loaded {len(path_to_ids)} image ID mappings.")
 
 path_to_meta = {}
-with open("metadata0.py", "r") as f:
+with open("metadata-small.py", "r") as f:
     for line in f:
         curr_line = line[1:-1]
         curr_line = curr_line.strip().split(",")
@@ -53,6 +58,10 @@ def ann_naive(emb: np.ndarray, query_vec: np.ndarray, k: int):
     # --- sort by distance (ascending) ---
     dists.sort(key=lambda x: x[1])
 
+    process = psutil.Process(os.getpid())
+    memory_info = process.memory_info()
+
+    print(f"Resident Set Size (RSS): {memory_info.rss / (1024 * 1024):.2f} MB")
     # --- take top-k ---
     topk = dists[:k]
     idx = [i for i, _ in topk]
@@ -66,12 +75,12 @@ def metadata_matches(node_meta: dict, query_metadata: dict) -> bool:
 
     for query_key in query_metadata.keys():
         if query_key not in node_meta.keys():
-            continue
+            return False
 
         op, target = query_metadata[query_key]
 
         if op == "exact":
-            if query_key == "item_weight" and node_meta[query_key][0]["value"] != target:
+            if query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] != target:
                 return False
             elif query_key == "model_year" and node_meta[query_key][0]["value"] != target:
                 return False
@@ -83,15 +92,35 @@ def metadata_matches(node_meta: dict, query_metadata: dict) -> bool:
                 return False
 
         elif op == "leq":
-            if query_key == "item_weight" and node_meta[query_key][0]["value"] > target:
+            if query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] > target:
                 return False
             elif query_key == "model_year" and node_meta[query_key][0]["value"] > target:
                 return False
 
         elif op == "geq":
-            if query_key == "item_weight" and node_meta[query_key][0]["value"] < target:
+            if query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] < target:
                 return False
             elif query_key == "model_year" and node_meta[query_key][0]["value"] < target:
+                return False
+            
+        elif op == "<":
+            if (query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] >= target):
+                return False
+            elif (query_key == "model_year" and node_meta[query_key][0]["value"] >= target):
+                return False
+            
+        elif op == ">":
+            if (query_key == "item_weight" and node_meta[query_key][0]["normalized_value"]["value"] <= target):
+                return False
+            elif (query_key == "model_year" and node_meta[query_key][0]["value"] <= target):
+                return False
+            
+        elif (op == "substring"):
+            if (query_key == "color" and target not in node_meta[query_key][0]["value"]):
+                return False
+            elif (query_key == "country" and target not in node_meta[query_key][0]["value"]):
+                return False
+            elif (query_key == "brand" and target not in node_meta[query_key][0]["value"]):
                 return False
 
     return True
@@ -124,7 +153,6 @@ def prefilter_search(query_vec: np.ndarray,
 
     # 2) Run k-NN only on those candidates
     sub_emb = embeddings[candidate_indices]
-    print(sub_emb.shape)
     local_idx, scores = ann_naive(sub_emb, query_vec, k=top_k)
 
     results = []
@@ -141,73 +169,24 @@ def prefilter_search(query_vec: np.ndarray,
 
     return results
 
-def postfilter_search(query_vec: np.ndarray,
-                      query_meta: dict,
-                      embeddings: np.ndarray,
-                      filenames: np.ndarray,
-                      path_to_meta: dict,
-                      top_k: int = 10,
-                      large_k: int = 200):
-    """
-    1) Compute k-NN over the WHOLE collection (or ANN results).
-    2) Walk results in similarity order and keep only those that match metadata.
-
-    Good when you want strong semantic ranking and metadata is not super selective.
-    """
-
-    # Get a larger candidate set than final top_k so metadata filtering has room
-    k_all = min(large_k, embeddings.shape[0])
-    cand_idx, cand_scores = ann_naive(embeddings, query_vec, k=k_all)
-
-    results = []
-    for rank_all, (idx, score) in enumerate(zip(cand_idx, cand_scores)):
-        fname = str(filenames[idx])
-        node_meta = path_to_meta.get(fname, {})
-        if metadata_matches(node_meta, query_meta):
-            results.append({
-                "rank":   len(results),   # rank after metadata filtering
-                "index":  int(idx),
-                "file":   fname,
-                "score":  float(score),
-                "meta":   node_meta
-            })
-            if len(results) == top_k:
-                break
-
-    print(f"[Post-filter] Returned {len(results)} results (from {k_all} ANN candidates).")
-    return results
-
-query_embeddings_data = np.load("embeddings_query.npy")
-query_filename_data = np.load("filenames_query.npy")
-query_vec = query_embeddings_data[1].reshape(embeddings.shape[1],)
-print(query_vec.shape)
-query_meta = {}
-time_start = time.time()
-pre_results = prefilter_search(
-    query_vec=query_vec,
-    query_meta=query_meta,
-    embeddings=embeddings,
-    filenames=filenames,
-    path_to_meta=path_to_meta,
-    top_k=3,
-)
-time_end = time.time()
-print(f"Pre-filter search completed in {time_end - time_start:.7f} seconds.")
-for r in pre_results:
-    print(r["index"], r["file"])
-
-print("\n=== POSTFILTER SEARCH ===")
-time_start = time.time()
-post_results = postfilter_search(
-    query_vec=query_vec,
-    query_meta=query_meta,
-    embeddings=embeddings,
-    filenames=filenames,
-    path_to_meta=path_to_meta,
-    top_k=3,
-    large_k=200,
-)
-time_end = time.time()
-print(f"Post-filter search completed in {time_end - time_start:.7f} seconds")
-for r in post_results:
-    print(r["index"], r["file"])
+if __name__ == "__main__":
+    query_embeddings_data = np.load("embeddings_query_full_query.npy")
+    query_filename_data = np.load("filenames_query_full_query.npy")
+    query_vec = query_embeddings_data[4].reshape(embeddings.shape[1],)
+    print(query_filename_data[4])
+    print(query_vec.shape)
+    query_meta_class_3 = {"country": ["exact", "US"]}
+    query_meta_class_2 = {"item_weight": ["<", 2], "brand": ["substring", "Amazon"]}
+    time_start = time.time()
+    pre_results = prefilter_search(
+        query_vec=query_vec,
+        query_meta=query_meta_class_2,
+        embeddings=embeddings,
+        filenames=filenames,
+        path_to_meta=path_to_meta,
+        top_k=3
+    )
+    time_end = time.time()
+    print(f"Pre-filter search completed in {time_end - time_start:.7f} seconds.")
+    for r in pre_results:
+        print(r["index"], r["file"])
