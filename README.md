@@ -34,7 +34,7 @@ Additionally, it compares pre-filtering and post-filtering which has been implem
         │                                                     │
         │   ┌───────────────┬────────────────┬────────────┐  │
         │   │ Pre‑Filtering │ Vector Search  │ Post‑Filter │  │
-        │   │  (metadata)   │  (HNSWlib)     │  (metadata) │  │
+        │   │  (metadata)   │  (HNSWlib)     │  (HNSWlib) │  │
         │   └───────────────┴────────────────┴────────────┘  │
         └────────────────────────────────────────────────────┘
                                 │
