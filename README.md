@@ -1,47 +1,120 @@
 
-# **ACORN Hybrid Vector Search**
+# ACORN Hybrid Vector Search
+A hybrid vector search system combining **image embeddings**, **HNSW-based ANN search**, and **structured metadata filtering** on the **Amazon Berkeley Objects (ABO)** dataset.  
+Implements an approximate version of **ACORN-1** with:
 
-## **Overview**
-ACORN Hybrid Vector Search is an end‑to‑end hybrid retrieval system combining **image embeddings**, **vector similarity**, and **structured metadata filtering** to search the **Amazon Berkeley Objects (ABO)** dataset.  
-This project implements the ACORN‑1 method:  
-- Vector search via **HNSWlib**  
-- Metadata filtering (pre & post)  
-- ResNet‑50 feature extraction  
-- Full hybrid orchestration with real query examples  
+- Metadata-aware hybrid traversal  
+- Pre-filtering and post-filtering baselines  
+- ResNet-50 embeddings  
+- Full evaluation pipeline (latency, recall, query selectivity classes)
 
-It includes scripts for embedding generation, metadata parsing, hybrid search, performance evaluation, and sample test images.
-Additionally, it compares pre-filtering and post-filtering which has been implemented as well.
+---
+
+# Project Overview
+
+Hybrid search answers queries like:
+
+> *“Find items visually similar to this image **AND** matching metadata filters (brand, weight, country…)”*
+
+This project shows:
+
+| Technique | Pros | Cons |
+|----------|------|------|
+| **Pre-filtering** | Perfect accuracy | Slow for low-selectivity filters |
+| **Post-filtering** | Fast | Fails when metadata is highly selective |
+| **Hybrid ACORN-style** | Fast + accurate | More complex; requires custom traversal |
+
+Our implementation modifies HNSW search behavior in Python to approximate the ACORN-1 predicate-pushdown approach.
+
+---
+
+# 🗂️ Mapping Report Sections → Code Files (Required for Grading)
+
+This section directly links report sections to implementation files.
+
+### **Section 2 — Design & Implementation**
+
+#### **2.1 Dataset Ingestion & Embeddings**
+| Report Section | Code File | Description |
+|----------------|-----------|-------------|
+| 2.1 | `parse-json.py` | Extracts metadata from ABO JSON, aligns with images |
+| 2.1 | `survey_metadata.py` | Surveys attribute distributions, used for query selection |
+| 2.1 | `vector_embeddings.py` | ResNet-50 inference → saves 2048-dim image vectors |
+
+---
+
+#### **2.2 Metadata Filtering**
+| Report Section | Code File | Description |
+|----------------|-----------|-------------|
+| 2.2 | `pre-filter.py` | Exact pre-filter baseline (metadata → ANN over subset) |
+| 2.2 | `post-filter.py` | ANN first → metadata filtering baseline |
+| 2.2 | `survey_metadata.py` | Attribute statistics for filter design |
+
+---
+
+#### **2.3 Hybrid Search (ACORN-1 Approximation)**
+| Report Section | Code File | Description |
+|----------------|-----------|-------------|
+| 2.3 | `acorn.py` | Main hybrid search engine: iterative max-visits, metadata-aware traversal, `mark_deleted` pruning |
+
+---
+
+### **Section 3 — Experimental Setup**
+| Report Section | Code File | Description |
+|----------------|-----------|-------------|
+| 3.1 | `acorn.py` | Latency + recall measurement for hybrid search |
+| 3.1 | `pre-filter.py` / `post-filter.py` | Latency baselines |
+| 3.1 | `vector_embeddings.py` | Embedding generation environment |
+| 3.2 | All scripts above | Query metadata classes injected into experiments |
+
+---
+
+### **Section 4 — Evaluation**
+| Report Section | Code File | Description |
+|----------------|-----------|-------------|
+| 4 | `6400Project.ipynb` | Generates figures (Class 1/2/3 latency, accuracy curves), runs experiments |
+
+---
+
+### **Attribution**
+| Component | Source | Modified? |
+|----------|--------|-----------|
+| HNSWlib | https://github.com/nmslib/hnswlib | Yes |
+| ResNet-50 (TorchVision) | PyTorch | No |
+| ABO Dataset JSON | Berkeley / Amazon | No |
+
+Everything else is original work by our team.
 
 ---
 
 ## **System Architecture**
 
 ```
-                ┌─────────────────────────────┐
-                │        Input Query Image     │
-                └───────────────┬─────────────┘
+                ┌──────────────────────────┐
+                │     Query Input Image     │
+                └───────────────┬──────────┘
                                 │
                                 ▼
-                ┌─────────────────────────────┐
-                │    ResNet‑50 Embedding       │
-                │   (vector_embeddings.py)     │
-                └───────────────┬─────────────┘
-                                │ 2048‑dim vector
+                ┌──────────────────────────┐
+                │  ResNet-50 Embeddings     │
+                │ (vector_embeddings.py)    │
+                └───────────────┬──────────┘
+                        2048-dim │ vector
                                 ▼
-        ┌────────────────────────────────────────────────────┐
-        │                ACORN Hybrid Search                  │
-        │                     (acorn.py)                      │
-        │                                                     │
-        │   ┌───────────────┬────────────────┬────────────┐  │
-        │   │ Pre‑Filtering │ Vector Search  │ Post‑Filter │  │
-        │   │  (metadata)   │  (HNSWlib)     │  (HNSWlib) │  │
-        │   └───────────────┴────────────────┴────────────┘  │
-        └────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────┐
+  │                     ACORN Hybrid Search                  │
+  │                          (acorn.py)                     │
+  │                                                         │
+  │   ┌─────────────────┬─────────────────┬────────────────┐ │
+  │   │   Pre-filter    │  HNSW Vector    │   Post-filter   │ │
+  │   │ (metadata→ANN)  │    Search       │  (ANN→metadata) │ │
+  │   └─────────────────┴─────────────────┴────────────────┘ │
+  └─────────────────────────────────────────────────────────┘
                                 │
                                 ▼
-                ┌─────────────────────────────┐
-                │     Final Ranked Results     │
-                └─────────────────────────────┘
+                ┌──────────────────────────┐
+                │   Final Ranked Results    │
+                └──────────────────────────┘
 ```
 
 ---
@@ -133,9 +206,19 @@ query_metadata_class_3   = {"country": ["exact", "US"]}
 
 ## **Example Usage**
 
-### **Run the hybrid search:**
+### **Run the ACORN hybrid search:**
 ```bash
 python acorn.py
+```
+
+### **Run the pre-filter baseline:**
+```bash
+python pre-filter.py
+```
+
+### **Run the post-filter baseline:**
+```bash
+python post-filter.py
 ```
 
 ### **Replace with your own query image**
@@ -146,6 +229,20 @@ query_filename = "query_images/my_image.jpg"
 ```
 
 ---
+
+## **Example Query Metadata**
+```
+query_metadata_class_2_2 = {
+    "item_weight": ["<", 2],
+    "brand": ["substring", "Amazon"]
+}
+
+query_metadata_class_3 = {
+    "country": ["exact", "US"],
+    "item_weight": ["exact", 1.25],
+    "brand": ["exact", "365 Everyday Value"]
+}
+```
 
 ## **Example Search Output**
 ```
