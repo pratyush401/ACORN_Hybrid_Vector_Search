@@ -28,7 +28,7 @@ Our implementation modifies HNSW search behavior in Python to approximate the AC
 
 ---
 
-# 🗂️ Mapping Report Sections → Code Files (Required for Grading)
+# Mapping Report Sections → Code Files 
 
 This section directly links report sections to implementation files.
 
