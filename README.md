@@ -16,74 +16,76 @@ Hybrid search answers queries like:
 
 > *“Find items visually similar to this image **AND** matching metadata filters (brand, weight, country…)”*
 
-This project shows:
+This project compares three approaches:
 
 | Technique | Pros | Cons |
 |----------|------|------|
-| **Pre-filtering** | Perfect accuracy | Slow for low-selectivity filters |
-| **Post-filtering** | Fast | Fails when metadata is highly selective |
-| **Hybrid ACORN-style** | Fast + accurate | More complex; requires custom traversal |
+| **Pre-filtering** | Perfect accuracy | Very slow when filter selects many items |
+| **Post-filtering** | Fast | Accuracy collapses when metadata is highly selective |
+| **Hybrid ACORN-style** | Fast + accurate | More complex; requires custom graph traversal |
 
-Our implementation modifies HNSW search behavior in Python to approximate the ACORN-1 predicate-pushdown approach.
+Our implementation modifies HNSWlib’s Python bindings to approximate ACORN-1 via:
+
+- **max_visits** (limits last-layer traversal depth) 
+- **blocked_set** (tracks nodes failing metadata filters)  
+- Iterative refinement with metadata-aware pruning
 
 ---
 
 # Mapping Report Sections → Code Files 
 
-This section directly links report sections to implementation files.
+This section maps each major report section to the corresponding implementation files.
 
 ### **Section 2 — Design & Implementation**
 
 #### **2.1 Dataset Ingestion & Embeddings**
 | Report Section | Code File | Description |
 |----------------|-----------|-------------|
-| 2.1 | `parse-json.py` | Extracts metadata from ABO JSON, aligns with images |
-| 2.1 | `survey_metadata.py` | Surveys attribute distributions, used for query selection |
-| 2.1 | `vector_embeddings.py` | ResNet-50 inference → saves 2048-dim image vectors |
+| 2.1 | `parse-json.py` | Extracts and aligns ABO metadata with image filenames |
+| 2.1 | `survey_metadata.py` | Surveys metadata distributions; used for query class design |
+| 2.1 | `vector_embeddings.py` | Generates 2048-dim visual embeddings using ResNet-50; builds HNSW index |
 
 ---
 
 #### **2.2 Metadata Filtering**
 | Report Section | Code File | Description |
 |----------------|-----------|-------------|
-| 2.2 | `pre-filter.py` | Exact pre-filter baseline (metadata → ANN over subset) |
-| 2.2 | `post-filter.py` | ANN first → metadata filtering baseline |
-| 2.2 | `survey_metadata.py` | Attribute statistics for filter design |
+| 2.2 | `pre-filter.py` | Exact pre-filter → brute-force L2 search on filtered subset |
+| 2.2 | `post-filter.py` | ANN search (large-k) → metadata pruning |
+| 2.2 | `survey_metadata.py` | Utilities for metadata selection and filtering |
 
 ---
 
-#### **2.3 Hybrid Search (ACORN-1 Approximation)**
+#### **2.3 Hybrid Search (ACORN-1 (ACORN) Approximation)**
 | Report Section | Code File | Description |
 |----------------|-----------|-------------|
-| 2.3 | `acorn.py` | Main hybrid search engine: iterative max-visits, metadata-aware traversal, `mark_deleted` pruning |
+| 2.3 | `acorn.py` | Primary hybrid search engine; implements max_visits, blocked_set, metadata-aware traversal |
 
 ---
 
 ### **Section 3 — Experimental Setup**
 | Report Section | Code File | Description |
 |----------------|-----------|-------------|
-| 3.1 | `acorn.py` | Latency + recall measurement for hybrid search |
-| 3.1 | `pre-filter.py` / `post-filter.py` | Latency baselines |
-| 3.1 | `vector_embeddings.py` | Embedding generation environment |
-| 3.2 | All scripts above | Query metadata classes injected into experiments |
+| 3.1 | `acorn.py` | Latency + recall measurements for hybrid approach |
+| 3.1 | `pre-filter.py` / `post-filter.py` | Baseline latency/accuracy measurements |
+| 3.2 | All scripts | Query metadata classes implemented and executed across all methods |
 
 ---
 
 ### **Section 4 — Evaluation**
 | Report Section | Code File | Description |
 |----------------|-----------|-------------|
-| 4 | `6400Project.ipynb` | Generates figures (Class 1/2/3 latency, accuracy curves), runs experiments |
+| 4 | `6400Project.ipynb`, `query_images` | Runs full evaluation suite; generates plots included in the final report |
 
 ---
 
 ### **Attribution**
 | Component | Source | Modified? |
 |----------|--------|-----------|
-| HNSWlib | https://github.com/nmslib/hnswlib | Yes |
-| ResNet-50 (TorchVision) | PyTorch | No |
+| HNSWlib | https://github.com/nmslib/hnswlib | Yes — extended with max_visits + selective blocking |
+| ResNet-50 | TorchVision (PyTorch) | No |
 | ABO Dataset JSON | Berkeley / Amazon | No |
-
-Everything else is original work by our team.
+| All Python logic (ACORN, baselines, ingestion, evaluation) | Original work | No |
 
 ---
 
@@ -151,10 +153,10 @@ ACORN_Hybrid_Vector_Search-main/
 
 ### **1. Embedding Generation (ResNet‑50)**
 Implemented in `vector_embeddings.py`:
-- Loads each product image  
+- Loads each image  
 - Uses TorchVision transforms  
 - Passes through pretrained ResNet‑50  
-- Saves 2048‑dim embeddings  
+- Extracts and saves 2048‑dim embeddings  
 - Builds HNSWlib ANN index  
 
 **Diagram:**
@@ -166,7 +168,7 @@ Image → Preprocessing → ResNet‑50 → 2048‑dim Vector → Stored in Inde
 ---
 
 ## **2. Metadata Processing**
-Handled by `survey_metadata.py` & `parse-json.py`.
+Handled by `survey_metadata.py` and `parse-json.py`.
 
 Metadata fields include:
 - Brand  
@@ -232,15 +234,13 @@ query_filename = "query_images/my_image.jpg"
 
 ## **Example Query Metadata**
 ```
-query_metadata_class_2_2 = {
-    "item_weight": ["<", 2],
+query_metadata_class_2_1 = {
+    "country": ["exact", "IN"],
     "brand": ["substring", "Amazon"]
 }
 
 query_metadata_class_3 = {
-    "country": ["exact", "US"],
-    "item_weight": ["exact", 1.25],
-    "brand": ["exact", "365 Everyday Value"]
+    "country": ["exact", "US"]
 }
 ```
 
@@ -284,10 +284,10 @@ unzip mappings.zip    -d mappings/
 - Replace ResNet‑50 with **ViT**, **CLIP**, **EfficientNet**, or a fine‑tuned model.
 
 ### Faster / Larger Vector Index
-- Replace HNSWlib with **FAISS**, **Milvus**, **Qdrant**, or **Weaviate**.
+- Replace HNSWlib with **FAISS HMSW**, **IVF-PQ**, **Milvus/Qdrant**.
 
 ### Deploy as an API
-- Wrap into **FastAPI** or **Flask** service.
+- Wrap into **FastAPI** or **Flask** microservice.
 
 ### Learned Re-ranking
 - ML model combining vector & metadata scores.
@@ -295,32 +295,10 @@ unzip mappings.zip    -d mappings/
 ---
 
 ## **Performance Notes**
-- HNSWlib enables sub‑millisecond search on thousands of embeddings.
-- Pre-filtering reduces candidate set dramatically.
-- Metadata + vector fusion improves accuracy significantly over pure ANN search.
+- Hybrid ACORN improves latency by 9–10× vs pre-filter
+- Post-filter only works when metadata strongly correlates with visual similarity
+- Attribute-aware ACORN boosts accuracy for extremely selective predicates
 
----
-
-## **Diagrams**
-
-### **Hybrid Scoring Flow**
-
-```
-          ┌───────────────┐
-          │ Query Vector   │
-          └───────┬───────┘
-                  ▼
-        ┌──────────────────────┐
-        │  HNSW Vector Search  │
-        └───────┬──────────────┘
-                ▼
-     ┌─────────────────────┐
-     │ Metadata Postfilter │
-     └─────────┬───────────┘
-               ▼
-       ┌─────────────────┐
-       │ Final Results    │
-       └─────────────────┘
 ```
 
 ## **Acknowledgements**
