@@ -188,6 +188,8 @@ unzip metadata-small.zip
 python3 vector-embeddings.py 
 python3 vector-embeddings.py <query image directory> (for embeddings of query image)
 ```
+There are some image directories included here for reference, but it is not the entire dataset (please note). In order to get all of it, it is required to download it from the ABO website
+linked here https://amazon-berkeley-objects.s3.amazonaws.com/index.html#download
 Please note for the above, the name of the files are hardcoded and need to be changed to replicate results
 Use the same names when running the below files
 
