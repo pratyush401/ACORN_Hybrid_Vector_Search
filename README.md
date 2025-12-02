@@ -219,9 +219,21 @@ query_metadata_class_3 = {
 }
 ```
 
-## **Example Search Output**
+## **Example Search Output (example contains acorn.py, others look similar)**
 ```
-
+Loaded 123099 image ID mappings.
+123098
+HNSW index built successfully!
+Indexing completed in 51.3545160 seconds.
+Resident Set Size (RSS): 2405.91 MB
+query4Bagpack-AmazonBasics,1.95,IT.jpg
+Search completed in 0.0035188 seconds.
+(122391, 0.0)
+4f8e1a66.jpg
+(44167, 19.771643)
+1de9d9db.jpg
+(3959, 22.932066)
+0254c86a.jpg
 ```
 
 ---
