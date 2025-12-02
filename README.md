@@ -301,10 +301,9 @@ unzip mappings.zip    -d mappings/
 
 ```
 
----
-## **Acknowledgements**
-- **ABO Dataset**  
-- **HNSWlib** (Yury Malkov)  
-- **PyTorch / TorchVision**
----
+Acknowledgements
+- ABO Dataset
+- HNSWlib (Yury Malkov)
+- PyTorch / TorchVision
+
 
