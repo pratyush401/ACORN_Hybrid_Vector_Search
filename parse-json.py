@@ -1,5 +1,6 @@
 import json
 import subprocess
+import os
 
 # --------------------------------------------------------------
 # Load all listing JSON lines from multiple listing files
@@ -18,10 +19,10 @@ print(f"Loaded {len(data)} listings")
 
 # --------------------------------------------------------------
 # Extract image IDs from CSV mapping files using AWK.
-# The mapping files (map0*.csv) contain image ID information.
+# The mapping files (map*.csv) contain image ID information.
 # The AWK command prints the first column of each CSV row.
 # --------------------------------------------------------------
-cmd = "awk -F',' '{print $1}' map0*.csv"
+cmd = "awk -F',' '{print $1}' map*.csv"
 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
 image_ids = result.stdout.strip().split('\n') # Parse the extracted image IDs (one per line)
@@ -34,33 +35,47 @@ print(len(image_ids), "image IDs loaded")
 #  - main_image_id
 #  - other_image_id (a list)
 #
-# For each match, write a simplified record into metadata00.py
-# in the form: [image_id, listing_json]
+# For each match, write a simplified record into metadata.py
+# in the form: [image_id, metadata_json]
 # --------------------------------------------------------------
 i = 0
 check = False
-with open("metadata00.py", "w") as m_file:
-    # Iterate through each image ID that needs metadata
-    for image in image_ids:
-        print(f"Processing image {i}")
-        # Search through all listings for a match
-        for listing in data:
-            # Direct match with main image field
-            if "main_image_id" in listing:
-                if listing['main_image_id'] == image:
-                    check = True
-                    # Write found metadata to output file
-                    m_file.write(f"[{image}, {json.loads(listing)}]\n")
-                    break
-            # Match against other images
-            if "other_image_id" in listing:
-                if image in listing["other_image_id"]:
-                    check = True
-                    m_file.write(f"[{image}, {json.loads(listing)}]\n")
-                    break
-        # Report missing matches for debugging/tracking
-        if not check:
-            print("No match found for image:", image)
-        # Reset match tracking flag for next image ID
-        check = False   
-        i = i + 1
+if not os.path.exists("metadata-small.py"):
+    with open("metadata.py", "w") as m_file:
+        for image in image_ids:
+            print(f"image {i}", end=", ")
+            for listing in data:
+                if "main_image_id" in listing:
+                    if listing['main_image_id'] == image:
+                        check = True
+                        m_file.write(f"[{image}, {json.dumps(listing)}]\n")
+                        break
+                if "other_image_id" in listing:
+                    if image in listing["other_image_id"]:
+                        check = True
+                        m_file.write(f"[{image}, {json.dumps(listing)}]\n")
+                        break
+            if not check:
+                print("No match found for image:", image)
+            check = False
+            i = i + 1
+
+# --------------------------------------------------------------
+# Select the required metadata and output a file that contains 
+# only the required attributes in the json objects
+# --------------------------------------------------------------
+
+if not os.path.exists("metadata-small.py"):
+    temp_dict = {}
+    with open("metadata.py", "r") as f:
+        with open("metadata-small.py", "w") as f_write:
+            for line in f:
+                curr_line = line[1:-1]
+                curr_line = curr_line.strip().split(",")
+                image_id = curr_line[0]
+                metadata = ",".join(curr_line[1:])[:-1]
+                for key in json.loads(metadata).keys():
+                    if key in ["color", "item_weight", "model_year", "brand", "country"]:
+                        temp_dict[key] =  json.loads(metadata)[key]
+                f_write.write(f"[{image_id}, {json.dumps(temp_dict)}]\n")
+                temp_dict = {}

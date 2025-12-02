@@ -79,7 +79,7 @@ filenames = []
 # --------------------------------------------------------------
 if len(sys.argv) > 1:
     # -------------------------
-    # USER-SUPPLIED IMAGE FOLDER
+    # USER-SUPPLIED IMAGE FOLDER (we use this for turning the queries into vector embeddings by passing in query_images/)
     # -------------------------
     dataset = ImageFolderDataset(sys.argv[1], transform)
     print(len(dataset), "images found.")
@@ -126,7 +126,7 @@ print(f"Total filenames: {len(filenames)}")
 
 # --------------------------------------------------------------
 # Save embeddings + filenames as .npy files
-#
+# Note that these files have to be changed based on what and where to store (currently these point to query files used for storing the embeddings that were queried)
 # Note:
 #   embeddings is a Python list of 2048-d vectors → converted to ndarray.
 # --------------------------------------------------------------

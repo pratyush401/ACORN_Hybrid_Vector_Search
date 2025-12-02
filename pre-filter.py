@@ -236,7 +236,12 @@ if __name__ == "__main__":
     # Load example query embedding + corresponding filename
     query_embeddings_data = np.load("embeddings_query_full_query.npy")
     query_filename_data = np.load("filenames_query_full_query.npy")
-    # Flatten query to shape (D,)
+    # This is one of the test runs, where the print shows which image is being queried
+    # The metadata is provided using the following template
+    # {"attribute": [operation, value]}
+    # "attribute": color, brand, item_weight, model_year, country
+    # "operation": "exact", "<", ">", "leq (<=)", "geq (>=)", "substring"
+    # "value": string type, int type, float type
     query_vec = query_embeddings_data[4].reshape(embeddings.shape[1],)
     print(query_filename_data[4])
     print(query_vec.shape)

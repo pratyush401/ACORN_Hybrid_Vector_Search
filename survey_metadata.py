@@ -11,9 +11,6 @@ import sys
 #     python survey_metadata.py country
 #
 # It prints how many times each unique metadata value appears.
-#
-# NOTE: This script assumes the metadata-small.py file contains
-#       lines in the form: [image_id, {metadata_dict}]
 # --------------------------------------------------------------
 
 # Ensure exactly one argument is passed (the metadata key to inspect)
@@ -53,8 +50,6 @@ with open("metadata-small.py", "r") as meta_small:
             # Case 2: If querying "item_weight"
             #         Format: temp_dict["item_weight"][0]["normalized_value"]["value"]
             #
-            # NOTE: The code checks sys.argv[1]["normalized_value"]["value"],
-            #         which is likely not correct but left unchanged as requested.
             # --------------------------------------------------
             elif sys.argv[1] == "item_weight":
                 if sys.argv[1]["normalized_value"]["value"] in temp_dict.keys():
